@@ -1,0 +1,262 @@
+#include <algorithm>
+#include <fstream>
+#include <cmath>
+#include <numeric>
+#include <iostream>
+#include <chrono>
+#include <thread>
+
+#include "SipmUsb.hpp"
+
+template<class RegAry>
+void cmp_registers(const RegAry& saved_regs, const RegAry& read_regs)
+{
+    for (size_t i = 0; i < read_regs.size(); ++i) {
+        auto loaded = read_regs[i];
+        auto saved = saved_regs[i];
+        if (loaded != saved) {
+            std::cout << "registers at index " << i << " are not equal" << std::endl
+                      << "saved is: " << saved << std::endl
+                      << "loaded is: " << loaded << std::endl;
+        }
+    }
+}
+
+void test_arm_ctrl(SipmUsb::BaseManager& man, const std::string& sn)
+{
+    // default constructor loads optimized settings
+    SipmUsb::ArmCtrlContainer acc;
+    acc.update_write_args(acc.LM_OPTIMIZED_REGISTERS);
+
+    // write optimized settings
+    acc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    man.write_from(sn, acc);
+
+    // read them back and confirm
+    acc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+    man.read_into(sn, acc);
+
+    // verify they're equal
+    SipmUsb::ArmCtrlContainer::Registers read_registers = acc.registers_from_buffer(SipmUsb::WhichBuffer::read);
+    std::cout << "arm_ctrl\n";
+    cmp_registers(acc.LM_OPTIMIZED_REGISTERS, read_registers);
+    std::cout << "done with arm_ctrl test!" << std::endl << std::endl;
+}
+
+void test_fpga_ctrl(SipmUsb::BaseManager& man, const std::string& cereal /* haha */)
+{
+    // default constructor loads optimized settings
+    SipmUsb::FpgaCtrlContainer fcc;
+
+    // write optimized settings
+    fcc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    fcc.update_write_args(fcc.LM_OPTIMIZED_REGISTERS);
+    man.write_from(cereal, fcc);
+
+    // read them back and confirm
+    fcc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+    man.read_into(cereal, fcc);
+
+    // verify they're equal
+    SipmUsb::FpgaCtrlContainer::Registers read_registers = fcc.registers_from_buffer(SipmUsb::WhichBuffer::read);
+    std::cout << "fpga_ctrl\n";
+    cmp_registers(SipmUsb::FpgaCtrlContainer::LM_OPTIMIZED_REGISTERS, read_registers);
+    std::cout << "done with fpga_ctrl test!" << std::endl << std::endl;
+}
+
+void test_fpga_action(SipmUsb::BaseManager& man, const std::string& cereal_numbah)
+{
+    SipmUsb::FpgaActionContainer fac;
+    fac.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    fac.update_write_args(SipmUsb::FpgaActionContainer::START_NEW_LIST_ACQUISITION);
+
+    man.write_from(cereal_numbah, fac);
+
+    fac.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+    man.read_into(cereal_numbah, fac);
+
+    auto read_regs = fac.registers_from_buffer(SipmUsb::WhichBuffer::read);
+    std::cout << "fpga_action\n";
+    std::cout << std::hex << std::showbase;
+    cmp_registers(SipmUsb::FpgaActionContainer::START_NEW_LIST_ACQUISITION, read_regs);
+    std::cout << std::dec << std::noshowbase;
+    std::cout << "done testing fpga_action stuff . . . ?" << std::endl << std::endl;
+}
+
+void test_serial(SipmUsb::BaseManager& man, const std::string& test)
+{
+    // memory type, transfer direction can be updated later
+    SipmUsb::ArmVersionContainer avc;
+    avc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+
+    man.read_into(test, avc);
+    std::cout << "got " << avc.decode_serial_number() << std::endl;
+    if (test == avc.decode_serial_number()) {
+        std::cout << "success!" << std::endl;
+    }
+}
+
+void test_list(SipmUsb::BaseManager& man, const std::string& serial)
+{
+    SipmUsb::ListModeContainer lmc;
+    lmc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+
+    man.read_into(serial, lmc);
+    auto lm_data = lmc.parse_list_buffer();
+    std::cout << "Got " << lm_data.size() << " events" << std::endl;
+    const auto& dp = lm_data[0];
+    std::cout << "First data point" << std::endl
+              << "Relative timestamp (units of 25ns): " << dp.rel_ts_clock_cycles << '\t'
+              << "Energy ADC bin: " << dp.energy_bin << std::endl;
+}
+
+void test_histogram(SipmUsb::BaseManager& man, const std::string& test)
+{
+    SipmUsb::LegacyHistogramContainer hic;
+    hic.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+
+    static const size_t NUM_RUNS = 10000;
+    std::vector<int64_t> v;
+    SipmUsb::LegacyHistogramContainer::HistoAry ary;
+    for (size_t i = 0; i < NUM_RUNS; ++i) {
+            auto start = std::chrono::system_clock::now();
+            man.read_into(test, hic);
+            ary = hic.gen_binned_histogram();
+            auto end = std::chrono::system_clock::now();
+            v.push_back(std::chrono::duration_cast<std::chrono::microseconds>(end - start).count());
+    }
+
+    auto avg = std::accumulate(v.begin(), v.end(), 0) / v.size();
+    auto maxt = std::max_element(v.begin(), v.end());
+    auto mint = std::min_element(v.begin(), v.end());
+    int64_t sd = 0;
+    for (const auto& elt : v) {
+        sd += (elt - avg) * (elt - avg);
+    }
+    sd /= v.size();
+    sd = sqrt(sd);
+    std::cout << "some statistics for " << NUM_RUNS << " runs:" << std::endl <<
+        "\tavg time taken: " << avg / 1000.0 << " +- " << sd / 1000.0 << " ms" << std::endl <<
+        "\tmax time taken: " << *maxt / 1000.0 << " ms" << std::endl <<
+        "\tmin time taken: " << *mint / 1000.0 << " ms" << std::endl; 
+
+    std::cout << "first few entries" << std::endl;
+    size_t i = 0;
+    for (const auto& elt : ary) {
+        std::cout << elt << ' ';
+        if (++i == 128) break;
+    }
+    std::cout << std::endl;
+}
+
+void tryit(SipmUsb::BaseManager& man)
+{
+    std::cout << "(serial number)" << std::endl;
+    std::string test;
+    for (const auto& sn : man.peek_serials()) {
+        std:: cout << sn << std::endl;
+        test = sn;
+    }
+
+    if (!test.empty()) {
+        test_serial(man, test);
+        test_arm_ctrl(man, test);
+        test_fpga_ctrl(man, test);
+        using namespace std::chrono_literals;
+        test_fpga_action(man, test);
+        std::this_thread::sleep_for(500ms);
+        // test_histogram(man, test);
+        test_list(man, test);
+    }
+    else {
+        std::cout << "Chosen serial is an empty string. Probably not connected to detector (or not using simulator)." << std::endl;
+    }
+}
+
+void init_test_dev(SipmUsb::BaseManager& man, const std::string& sn)
+{
+    std::cout << "init fpga ctrl" << std::endl;
+    // update fpga_ctrl settings
+    SipmUsb::FpgaCtrlContainer fcc;
+    fcc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    fcc.update_write_args(SipmUsb::FpgaCtrlContainer::LM_OPTIMIZED_REGISTERS);
+    man.write_from(sn, fcc);
+    fcc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+    man.read_into(sn, fcc);
+    cmp_registers(fcc.LM_OPTIMIZED_REGISTERS, fcc.registers_from_buffer(SipmUsb::WhichBuffer::read));
+    std::cout << "done fpga ctrl" << std::endl;
+
+    std::cout << "init arm ctrl" << std::endl;
+    // update arm_ctrl settings
+    SipmUsb::ArmCtrlContainer acc;
+    acc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    acc.update_write_args(SipmUsb::ArmCtrlContainer::LM_OPTIMIZED_REGISTERS);
+    man.write_from(sn, acc);
+    acc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+    man.read_into(sn, acc);
+    cmp_registers(acc.LM_OPTIMIZED_REGISTERS, acc.registers_from_buffer(SipmUsb::WhichBuffer::read));
+    std::cout << "done arm ctrl" << std::endl;
+}
+
+void actual_measurement_test(SipmUsb::BaseManager& man)
+{
+    std::string test;
+    for (const auto& sn : man.peek_serials()) {
+        std::cout << sn << std::endl;
+        test = sn;
+    }
+
+    init_test_dev(man, test);
+    std::ofstream ofs("list-test.tab");
+
+    // fpga_action starts/stops data collection
+    SipmUsb::FpgaActionContainer fac;
+    fac.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::write);
+    fac.update_write_args(SipmUsb::FpgaActionContainer::START_NEW_LIST_ACQUISITION);
+    
+    // holds and decodes read data
+    SipmUsb::ListModeContainer lmc;
+    lmc.update_transfer_flags(SipmUsb::MemoryType::ram, SipmUsb::TransferDirection::read);
+
+    using namespace std::chrono_literals;
+    using std::chrono::duration_cast;
+    using us = std::chrono::microseconds;
+    using hrc = std::chrono::high_resolution_clock;
+    int num_runs = 1500;
+    for (int i = 0; i < num_runs; ++i) {
+        auto start = hrc::now();
+        man.write_from(test, fac);
+        std::this_thread::sleep_for(500ms);
+        man.read_into(test, lmc);
+        auto end = hrc::now();
+
+        auto before_parse = std::chrono::high_resolution_clock::now();
+        std::vector<SipmUsb::ListModeDataPoint> lm_dat = lmc.parse_list_buffer();
+        auto after_parse = std::chrono::high_resolution_clock::now();
+        std::cout << "parsing took "
+                  << duration_cast<us>(after_parse - before_parse).count() / 1000.0 << " ms" << std::endl
+                  << "whole init/read took "
+                  << duration_cast<us>(end - start).count() / 1000.0 - 500 << " ms" << std::endl
+                  << "done with run " << i << std::endl;
+
+        for (const auto& dp : lm_dat) {
+            ofs << dp.rel_ts_clock_cycles << '\t' << dp.energy_bin << std::endl;
+        }
+    }
+}
+
+int main()
+{
+    // SimManager and UsbManager are subclasses of BaseManager
+    //SipmUsb::UsbManager um;
+    //std::cout << "real interface" << std::endl;
+    //tryit(um);
+    //actual_measurement_test(um);
+    // ha ha
+    std::string simp = "./lib/sipm_3k_simusb.so";
+    SipmUsb::SimManager sm(simp);
+    std::cout << "simulated interface" << std::endl;
+    tryit(sm);
+    // actual_measurement_test(sm);
+    return 0;
+}

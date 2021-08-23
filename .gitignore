@@ -1,0 +1,12 @@
+main
+._*
+*.swp
+*.txt
+*.o
+.depend
+*.pyo
+*.pyc
+*.tab
+*.dblite
+extract_registers/_*
+src/deps

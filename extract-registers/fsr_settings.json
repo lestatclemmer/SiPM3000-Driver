@@ -1,0 +1,57 @@
+{
+    "arm_ctrl": {
+        "fields": {
+            "gain_stabilization": 0.0,
+            "peltier": 0.0,
+            "temp_ctrl": 1.0,
+            "temp_target": 27.0,
+            "temp_period": 1.0,
+            "temp_weight": 0.10000000149011612,
+            "cal_temp": 25.0,
+            "cal_ov": 34.0,
+            "cal_dg": 4800.0,
+            "cal_target": 20000.0,
+            "cal_scint": 0.0,
+            "cal_par_0": 0.0,
+            "run_action": 0.0
+        }
+    },
+    "fpga_ctrl": {
+        "fields": {
+            "fine_gain": 17800,
+            "baseline_threshold": 20,
+            "cr1_upper": 0,
+            "pulse_threshold": 34,
+            "cr2_upper": 0,
+            "hold_off_time": 72,
+            "integration_time": 60,
+            "roi_bounds": 65280,
+            "trigger_delay": 100,
+            "cr6_upper": 0,
+            "ctrl_7": 1092,
+            "run_time_0": 0,
+            "run_time_1": 0,
+            "short_it": 0,
+            "put": 0,
+            "ecomp": 2,
+            "pcomp": 4,
+            "gain_select": 15,
+            "cr12_upper": 0,
+            "ctrl_13": 0,
+            "led_repeat_time": 240,
+            "led_pulse_width": 128,
+            "ha_mode": 0,
+            "trace_mode": 0,
+            "lm_mode": 0,
+            "led_on": 0,
+            "rtlt": 0,
+            "sel_led": 0,
+            "daq_mode": 0,
+            "nai_mode": 0,
+            "psd_on": 0,
+            "psd_select": 0,
+            "cr15_upper": 16,
+            "suspend": 0
+        }
+    }
+}

@@ -1,0 +1,412 @@
+#include <chrono>
+#include <cstring>
+#include <dlfcn.h>
+#include <iostream>
+#include <iomanip>
+#include <map>
+#include <string>
+#include <sstream>
+#include <thread>
+#include <vector>
+#include "usb.h"
+
+// enclosing folder has to be called "lib" for the simulator or else program crashes. ._.
+static const char LIB_PATH[] = "./libusb-0.1.so";
+
+typedef union HistoEntry {
+    char bytes[4];
+    uint32_t entry;
+} HistoEntry;
+
+// constants taken from mca_device.py
+static const uint16_t BRIDGEPORT_VID = 0x1fa4;
+static const int CMD_OUT_EP = 0x01;
+static const int CMD_IN_EP = 0x81;
+static const int DATA_OUT_EP = 0x02;
+static const int DATA_IN_EP = 0x82;
+static const size_t HISTO_BINS = 4096;  // #
+static const size_t BIN_SIZE = 4;       // bytes
+
+using UsbDevice = struct usb_dev_handle;
+using BpiMap = std::map<std::string, UsbDevice*>;
+using HistoAry = std::array<std::uint16_t, HISTO_BINS>;
+
+// function typedefs for libusb functions
+typedef void (*init_t)(void);
+typedef int (*find_busses_t)(void);
+typedef int (*find_devices_t)(void);
+typedef struct usb_bus* (*get_busses_t)(void);
+typedef struct usb_dev_handle* (*open_t)(struct usb_device*);
+typedef int (*close_t)(struct usb_dev_handle* dev);
+typedef int (*det_kern_t)(struct usb_dev_handle*, int);
+typedef int (*interface_t)(struct usb_dev_handle*, int); 
+typedef int (*bulk_t)(struct usb_dev_handle*, int, char*, int, int);
+
+// variables corresponding tostruct libusb functions
+// prefix "dl" differentiates the functions from those defined in "usb.h"
+init_t dl_usb_init;
+find_busses_t dl_usb_find_busses;
+find_devices_t dl_usb_find_devices;
+get_busses_t dl_usb_get_busses;
+open_t dl_usb_open;
+close_t dl_usb_close;
+det_kern_t dl_usb_detach_kernel_driver_np;
+interface_t dl_usb_claim_interface;
+interface_t dl_usb_release_interface;
+bulk_t dl_usb_bulk_read;
+bulk_t dl_usb_bulk_write;
+
+
+int chk_load(const char* sym)
+{
+    const char* err = dlerror();
+    if (err) {
+        std::cerr << "Error loading symbol: " << err << std::endl;
+        return 1;
+    }
+    std::cout << "Loaded " << sym << std::endl;
+    return 0;
+}
+
+
+void load_usb_funcs(void* handle)
+{
+    int ret = 0;
+    std::cout << "Loaded library" << std::endl;
+
+    // |= so that if any load fails, ret is 1
+    dl_usb_init = (init_t) dlsym(handle, "usb_init");
+    ret |= chk_load("usb_init"); 
+    dl_usb_find_busses = (find_busses_t) dlsym(handle, "usb_find_busses");
+    ret |= chk_load("usb_find_busses"); 
+    dl_usb_find_devices = (find_devices_t) dlsym(handle, "usb_find_devices");
+    ret |= chk_load("usb_find_devices"); 
+    dl_usb_get_busses = (get_busses_t) dlsym(handle, "usb_get_busses");
+    ret |= chk_load("usb_get_busses"); 
+    dl_usb_open = (open_t) dlsym(handle, "usb_open");
+    ret |= chk_load("usb_open"); 
+    dl_usb_close = (close_t) dlsym(handle, "usb_close");
+    ret |= chk_load("usb_close");
+    dl_usb_detach_kernel_driver_np = (det_kern_t)
+        dlsym(handle, "usb_detach_kernel_driver_np");
+    ret |= chk_load("usb_detach_kernel_driver_np");
+    dl_usb_claim_interface = (interface_t) dlsym(handle, "usb_claim_interface");
+    ret |= chk_load("usb_claim_interface");
+    dl_usb_release_interface = (interface_t) dlsym(handle, "usb_claim_interface");
+    ret |= chk_load("usb_claim_interface");
+    dl_usb_bulk_read = (bulk_t) dlsym(handle, "usb_bulk_read");
+    ret |= chk_load("usb_bulk_read");
+    dl_usb_bulk_write = (bulk_t) dlsym(handle, "usb_bulk_write");
+    ret |= chk_load("usb_bulk_write");
+
+    if (ret != 0) { throw std::runtime_error("Failed to load a USB function. hmm..."); }
+}
+
+std::vector<struct usb_dev_handle*> claim_bp_devs(struct usb_bus* cur_bus)
+{
+    // save
+    std::ios_base::fmtflags f(std::cout.flags());
+    int ret = 0;
+    std::vector<struct usb_dev_handle*> devs;
+    // go through linked list of busses
+    std::cout << "scanning devs" << std::endl;
+    while (cur_bus) {
+        struct usb_device* cur_dev = cur_bus->devices;
+        // go through linked list of devices and print some info
+        while (cur_dev) {
+            std::cout << "Device #" << cur_dev->devnum << std::endl
+                      << "Device file name: " << cur_dev->filename << std::endl;
+            struct usb_device_descriptor desc = cur_dev->descriptor;
+
+            std::cout << "Vendor ID: " << std::showbase << std::hex
+                      << desc.idVendor << std::endl
+                      << "Product ID: " << desc.idProduct << std::endl;
+
+            if (desc.idVendor == BRIDGEPORT_VID) {
+                std::cout << "(Bridgeport device.)" << std::endl;
+                struct usb_dev_handle* han = dl_usb_open(cur_dev);
+                // detach OS driver from interface 0 (default)
+                ret = dl_usb_detach_kernel_driver_np(han, 0);
+                if (ret != 0) {
+                    std::cerr << "Couldn't detach kernel driver: " << strerror(errno) << std::endl << "Continuing . . ." << std::endl;
+                    std::cout << "Press a key to continue " << std::endl;
+                    std::cin.get();
+                }
+                // claim interface 1 (? ok Bridgeport)
+                ret = dl_usb_claim_interface(han, 1);
+                if (ret != 0) {
+                    std::cerr << "Couldn't claim interface: " << strerror(errno) << std::endl << "Continuing . . ." << std::endl;
+                    std::cout << "Press a key to continue " << std::endl;
+                    std::cin.get();
+                }
+
+                devs.push_back(han);
+            }
+
+            std::cout << std::endl;
+            cur_dev = cur_dev->next;
+        }
+        cur_bus = cur_bus->next;
+    }
+
+    // restore
+    std::cout.flags(f);
+    return devs;
+}
+
+BpiMap map_serials_devs(std::vector<struct usb_dev_handle*>& bp_devs)
+{
+    BpiMap ret_devs;
+    int ret;
+    // detector will send 64-byte response
+    // libusb uses signed char as bytes. weird.
+    const uint8_t SN_LEN = 16, SN_START_IDX = 8;
+    const char NBYTES = 64;
+    const int TIMEOUT = 1000;   // ms
+    char read_buf[NBYTES], write_buf[NBYTES];
+
+    write_buf[0] = 4;       // ARM_STATUS
+    write_buf[2] = NBYTES;  // indicates we want to read 64 bytes
+
+    // all communication with this version of detector firmware is via bulk read/write
+    for (auto& dev : bp_devs) {
+        ret = dl_usb_bulk_write(dev, CMD_OUT_EP, write_buf, NBYTES, TIMEOUT);
+        if (ret != NBYTES) {
+            std::stringstream ss;
+            ss << "Wrong # of bytes written: " << strerror(ret);
+            throw std::runtime_error(ss.str());
+        }
+        ret = 0;
+        while (!ret) {
+            ret = dl_usb_bulk_read(dev, DATA_IN_EP, read_buf, NBYTES, TIMEOUT);
+        }
+        if (ret < 0) {
+            throw std::runtime_error("Problem reading serial number from detector");
+        }
+
+        std::stringstream ss;
+        for (size_t i = SN_START_IDX; i < (SN_START_IDX + SN_LEN); ++i) {
+            // need the unary '+' operator so char prints as a number
+            ss << std::hex << std::setw(2) << std::setfill('0') << std::uppercase << (0xff & read_buf[i]);
+        }
+        std::string serial_number = ss.str();
+        ret_devs[serial_number] = dev;
+    }
+
+    return ret_devs;
+}
+
+int xfer_in_chunks(struct usb_dev_handle* dev, char* xfer_buf, int nbytes, int endpoint)
+{
+    bulk_t xfer_func = nullptr;
+
+    // from USB standard https://www.keil.com/pack/doc/mw/USB/html/_u_s_b__endpoint__descriptor.html
+    static const uint8_t XFER_DIR = 1 << 7;
+    if (endpoint & XFER_DIR) { xfer_func = dl_usb_bulk_read; }
+    else { xfer_func = dl_usb_bulk_write; }
+
+    // ARM processor inside detector only has 256-byte buffer
+    static const int CHUNK_SZ = 256;
+    int nchunks = nbytes / CHUNK_SZ;
+    int leftover = nbytes % CHUNK_SZ;
+    int ret = 0;
+    for (int i = 0; i < nchunks; ++i) {
+        ret = xfer_func(dev, endpoint, xfer_buf + i*CHUNK_SZ, CHUNK_SZ, 1000);
+        if (ret != CHUNK_SZ) { std::cerr << "didn't read appropriate chunk size: " << ret << " vs " << CHUNK_SZ << std::endl; }
+        else if (ret < 0) return ret;
+    }
+    if (leftover != 0) {
+        ret = xfer_func(dev, endpoint, xfer_buf + nchunks*CHUNK_SZ, leftover, 1000);
+        if (ret != leftover) { std::cerr << "didn't read appropriate leftover: " << ret << " vs " << CHUNK_SZ << std::endl; }
+        else if (ret < 0) return ret;
+    }
+    return 0;
+}
+
+HistoAry read_histogram(struct usb_dev_handle* dev)
+{
+    constexpr int nbytes = HISTO_BINS * sizeof(uint32_t);  // 32 bit integers
+    uint8_t HISTO_CMD = 3;                          // constant indicating read histogram
+    uint8_t MEM_TYPE = 0;                           // ram
+    uint8_t FPGA_READ_TYPE = 2;                     // ? ok
+
+    // header = (num_bytes << 16) + (mca.mem_type << 12) + 0x800 + (io_obj.cmd_addr << 4) + io_obj.wr_type
+    uint32_t header = (nbytes << 16) + (MEM_TYPE << 12) + (HISTO_CMD << 4) + FPGA_READ_TYPE;
+    std::cout << std::dec << header << std::endl;
+
+    char write_buf[64], read_buf[nbytes];
+    char* hacky = (char*) &header;
+    for (size_t i = 0; i < 4; ++i) {
+        std::cout << (0xff & hacky[i]) << std::endl;
+        write_buf[i] = hacky[i];
+    }
+    // little endian
+    std::cout <<
+        (static_cast<uint32_t>(hacky[3]) << 24 |
+         static_cast<uint32_t>(hacky[2]) << 16 |
+         static_cast<uint32_t>(hacky[1]) << 8  |
+         static_cast<uint32_t>(hacky[0])       )
+        << std::endl << header << std::endl;
+
+    int ret;
+    ret = dl_usb_bulk_write(dev, CMD_OUT_EP, write_buf, 64, 1000);
+    if (ret != 64) {
+        throw std::runtime_error("Failed to write appropriate # of command bytes to detector");
+    }
+    
+    ret = xfer_in_chunks(dev, read_buf, nbytes, DATA_IN_EP);
+    if (ret < 0) {
+        std::stringstream ss;
+        ss << "Error reading histogram: " << strerror(errno) << std::endl;
+        throw std::runtime_error(ss.str());
+    }
+
+    HistoAry ret_ary;
+    HistoEntry he;
+    for (int i = 0; i < nbytes; i += 4) {
+        for (int j = 0; j < 4; ++j)
+            he.bytes[j] = read_buf[i + j];
+        ret_ary[i / 4] = he.entry;
+    }
+    return ret_ary;
+}
+
+void test_histogram(BpiMap& dev_map)
+{
+    char delay_buf[256] = {0};
+    delay_buf[1] = 8;
+    delay_buf[2] = 60;      // magic numbers from bridgeport
+    // give it time to... fill in the histogram? idk
+    for (auto& p : dev_map) {
+        UsbDevice* dev = p.second;
+        for (int blah = 0; blah < 1000; ++blah) {
+            dl_usb_bulk_write(dev, CMD_OUT_EP, delay_buf, 256, 1000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    for (auto& p : dev_map) {
+        std::cout << "(SN, handle addr): " << "(" << p.first << ", " << p.second << ")" << std::endl;
+        auto start = std::chrono::high_resolution_clock::now();
+        HistoAry histogram = read_histogram(p.second);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::cout << "It took " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us to read a histogram." << std::endl;
+
+        std::ios_base::fmtflags f(std::cout.flags());
+        std::cout << std::setw(3);
+        for (size_t i = 0; i < histogram.size(); ++i) {
+            std::cout << std::setw(3) << histogram[i] << " ";
+            if ((i + 1) % 16 == 0) {
+                std::cout << std::endl;
+            }
+        }
+        std::cout << std::endl;
+        std::cout.flags(f);
+    }
+}
+
+void test_manip_settings(BpiMap& dev_map)
+{
+    static const uint8_t FPGA_WRITE_TYPE = 1;        // want to write to FPGA control registers
+    static const uint8_t FPGA_READ_TYPE = 2;         // want to read from FPGA control registers
+    static const uint8_t FPGA_CMD_INDIC = 0;         // number indicating command (to be packed into header)
+    static const uint8_t MEM_TYPE = 0;               // RAM = 0, NVRAM = 1, reset = 2 (not sure what that does ngl)
+    static const uint16_t SHORT_WRITE_FLAG = 0x800;  // we're doing a "short write" so we need to add this to the header
+
+    static const size_t REG_ENTRIES = 16;
+    // translated by Bridgeport software
+    // took fields and user and turned them into "registers"
+    uint16_t optimized_fpga_ctrl[REG_ENTRIES] = {17800, 20, 34, 72, 60, 65280, 100, 1092, 0, 0, 0, 0, 3906, 0, 2048, 32768};
+    uint16_t read_fpga_ctrl[REG_ENTRIES] = {0};
+
+    static const size_t FPGA_CTRL_ELT_SZ = sizeof(uint16_t);
+    static const size_t NUM_BYTES_REG = REG_ENTRIES * FPGA_CTRL_ELT_SZ;
+    char register_bytes[NUM_BYTES_REG] = {0};
+
+    static const size_t CMD_BYTES_OUT = 64;
+    char write_buf[CMD_BYTES_OUT];
+    char read_buf[NUM_BYTES_REG];
+
+    // put the registers into bytes (little-endian ordering)
+    std::memcpy(register_bytes, optimized_fpga_ctrl, NUM_BYTES_REG);
+    
+    for (auto& p : dev_map) {
+        // header contains info on the command, its size, where it's being written to.
+        uint32_t header = (CMD_BYTES_OUT << 16) + (MEM_TYPE << 12) + (FPGA_CMD_INDIC << 4) + FPGA_WRITE_TYPE + SHORT_WRITE_FLAG;
+        std::memcpy(write_buf, &header, sizeof(uint32_t));
+        
+        // copy the rest of the command
+        std::memcpy(write_buf + sizeof(uint32_t), register_bytes, NUM_BYTES_REG);
+
+        UsbDevice* dev = p.second;
+        std::cout << "Writing settings for " << p.first << std::endl;
+        xfer_in_chunks(dev, write_buf, CMD_BYTES_OUT, CMD_OUT_EP);
+
+        // now read back the settings to make sure everything worked
+        // first, write the "i want to read FPGA control" command
+        header = (NUM_BYTES_REG << 16) + (MEM_TYPE << 12) + (FPGA_CMD_INDIC << 4) + FPGA_READ_TYPE;
+        std::memset(write_buf, 0, CMD_BYTES_OUT);
+        std::memcpy(write_buf, &header, sizeof(uint32_t));
+        // actual command written here
+        xfer_in_chunks(dev, write_buf, CMD_BYTES_OUT, CMD_OUT_EP);
+
+        // now read the settings from the detector
+        xfer_in_chunks(dev, read_buf, NUM_BYTES_REG, DATA_IN_EP);
+        std::memcpy(read_fpga_ctrl, read_buf, NUM_BYTES_REG);
+        for (size_t i = 0; i < REG_ENTRIES; ++i) {
+            std::cout << "Started with: " << optimized_fpga_ctrl[i] << std::endl
+                      << "Got:          " << read_fpga_ctrl[i] << std::endl
+                      << (read_fpga_ctrl[i] == optimized_fpga_ctrl[i] ? "Good!" : "Bad :(") << std::endl;
+        }
+    }
+}
+
+int main(/* nothing */)
+{
+    void* sim_handle = dlopen(LIB_PATH, RTLD_LAZY);
+    if (!sim_handle) {
+        std::cerr << "Cannot open " << LIB_PATH << ": " << dlerror() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // cascading return codes . . . :eyeroll:
+    try { load_usb_funcs(sim_handle); }
+    catch (const std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // initialize libusb to communicate with simulator (or real hardware)
+    dl_usb_init();
+    dl_usb_find_busses();
+    dl_usb_find_devices();
+    struct usb_bus* busses = dl_usb_get_busses();
+
+    // at most 4 bridgeport devices
+    std::vector<struct usb_dev_handle*> bp_devs;
+    try {
+        bp_devs = claim_bp_devs(busses);
+    }
+    catch (const std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+    std::cout << "claimed USB devices successfully" << std::endl;
+
+    // wtf is this lmao
+    BpiMap dev_map = map_serials_devs(bp_devs);
+    test_manip_settings(dev_map);
+    //test_histogram(dev_map);
+
+    for (auto& dev : bp_devs) {
+        int ret = dl_usb_release_interface(dev, 1);
+        if (ret != 0) { throw std::runtime_error("Failed to release claimed device."); }
+        ret = dl_usb_close(dev);
+        if (ret != 0) { throw std::runtime_error("Failed to close dev. handle."); }
+    }
+    std::cout << "released USB resources successfully" << std::endl;
+
+    dlclose(sim_handle);
+    std::cout << "Closed " << LIB_PATH << std::endl;
+    return 0;
+}
