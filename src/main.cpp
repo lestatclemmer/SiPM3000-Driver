@@ -42,7 +42,7 @@ SipmUsb::LegacyHistogramContainer::HistoAry acquire_histogram()
     // if there isn't one connected, an exception will be thrown at some point
     std::string connected_serial;
     if (man.peek_serials().size() != 0) {
-        std::string connected_serial = man.peek_serials().at(0);
+        connected_serial = man.peek_serials().at(0);
     }
 
     initialize_detector(man, connected_serial);
