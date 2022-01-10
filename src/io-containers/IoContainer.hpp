@@ -56,6 +56,27 @@ namespace SipmUsb
             IoContainer(const IoContainer& other) =delete;
             IoContainer& operator=(const IoContainer& other) =delete;
 
+            // this is bad practice to expose data like this
+            // but just don't mess with it lol
+            static constexpr size_t NUM_CMD_WRITE_BYTES = 64;
+            static constexpr size_t NUM_DATA_BYTES = sizeof(RegT) * NumRegs;
+            unsigned char* cmd_buffer_ptr()
+            { return cmd_buffer.data(); }
+            const unsigned char* cmd_buffer_ptr() const
+            { return cmd_buffer.data(); }
+
+            unsigned char* read_data_buffer_ptr()
+            { return read_data_buffer.data(); }
+            const unsigned char* read_data_buffer_ptr() const
+            { return read_data_buffer.data(); }
+
+            unsigned char* write_data_buffer_ptr()
+            { return write_data_buffer.data(); }
+            const unsigned char* write_data_buffer_ptr() const
+            { return write_data_buffer.data(); }
+
+            static bool short_write_possible() { return NUM_CMD_WRITE_BYTES - 4 >= NUM_DATA_BYTES; }
+
             void update_write_args(const Registers& new_regs)
             {
                 // fill the write buffer with user-provided registers
@@ -67,7 +88,7 @@ namespace SipmUsb
 
                 if (short_write_possible()) {
                     // clear the old short write data out (if it's there)
-                    unsigned char* sw_buf = cmd_buffer + 4;
+                    unsigned char* sw_buf = cmd_buffer.data() + 4;
                     // copy write buffer data into the command packet to send all at once 
                     for (size_t i = 0; i < NUM_CMD_WRITE_BYTES; ++i) {
                         sw_buf[i] = (i < NUM_DATA_BYTES)? new_data_ptr[i] : 0;
@@ -118,7 +139,7 @@ namespace SipmUsb
                 Registers ret;
 
                 auto ret_ptr = reinterpret_cast<unsigned char*>(ret.data());
-                const unsigned char* buf = (b == WhichBuffer::read)? read_data_buffer : write_data_buffer;
+                const auto& buf = (b == WhichBuffer::read)? read_data_buffer : write_data_buffer;
 
                 for (size_t i = 0; i < NUM_DATA_BYTES; ++i) {
                     ret_ptr[i] = buf[i];
@@ -127,39 +148,31 @@ namespace SipmUsb
                 return ret;
             }
         protected:
-            static constexpr size_t NUM_CMD_WRITE_BYTES = 64;
-            static constexpr size_t NUM_DATA_BYTES = sizeof(RegT) * NumRegs;
-            unsigned char* cmd_buffer;
-            unsigned char* read_data_buffer;
-            unsigned char* write_data_buffer;
+            std::array<unsigned char, NUM_CMD_WRITE_BYTES> cmd_buffer;
+            std::array<unsigned char, NUM_DATA_BYTES> read_data_buffer;
+            // note: the detector expects a packet of at least 64 bytes.
+            // if there are fewer bytes than this, the detector might crash.
+            // however, the only way that fewer than 64 bytes may be sent to the detector at the moment
+            // is via a short write, meaning that the data bytes get packed into the command packet
+            // and sent all at once. so there is no harm in only allocating NUM_DATA_BYTES to the write buffer,
+            // even if NUM_DATA_BYTES < 64. they will never be written on their own.
+            std::array<unsigned char, NUM_DATA_BYTES> write_data_buffer;
 
             // generic class has no flags; make this pure virtual.
             virtual McaUsbFlags mca_flags() const =0;
 
             IoContainer() :
-                cmd_buffer(new unsigned char[NUM_CMD_WRITE_BYTES]),
-                read_data_buffer(new unsigned char[NUM_DATA_BYTES]),
-                // note: the detector expects a packet of at least 64 bytes.
-                // if there are fewer bytes than this, the detector might crash.
-                // however, the only way that fewer than 64 bytes may be sent to the detector at the moment
-                // is via a short write, meaning that the data bytes get packed into the command packet
-                // and sent all at once. so there is no harm in only allocating NUM_DATA_BYTES to the write buffer,
-                // even if NUM_DATA_BYTES < 64. they will never be written on their own.
-                write_data_buffer(new unsigned char[NUM_DATA_BYTES])
+                cmd_buffer(),
+                read_data_buffer(),
+                write_data_buffer()
             { }
 
             virtual ~IoContainer()
-            {
-                if (cmd_buffer) delete[] cmd_buffer;
-                if (write_data_buffer) delete[] write_data_buffer;
-                if (read_data_buffer) delete[] read_data_buffer;
-            }
-
-            static bool short_write_possible() { return NUM_CMD_WRITE_BYTES - 4 >= NUM_DATA_BYTES; }
+            { }
         private:
             // from mca_device.py
             const uint32_t SHORT_WRITE_FLAG = 0x800;
-            // so it can access pointers
-            friend class BaseManager;
+            /* // so it can access pointers */
+            /* friend class BaseManager; */
     };
 }

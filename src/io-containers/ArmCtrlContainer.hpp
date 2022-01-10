@@ -12,7 +12,7 @@ namespace SipmUsb
     * w setterberg 19 august 2021
     */
    /* need it as 16 i guess (21 august 2021) */
-   static const uint8_t ARM_CTRL_NUM_REGS = 16;
+   static const size_t ARM_CTRL_NUM_REGS = 16;
 
    class ArmCtrlContainer : public IoContainer<float, ARM_CTRL_NUM_REGS>
    {

@@ -19,14 +19,14 @@ namespace SipmUsb
         armvc.update_transfer_flags(MemoryType::ram, TransferDirection::read);
 
         int ret = xfer_in_chunks(
-            han_wrap, BaseManager::CMD_OUT_EP, armvc.cmd_buffer, armvc.NUM_CMD_WRITE_BYTES, BaseManager::TIMEOUT_MS);
+            han_wrap, BaseManager::CMD_OUT_EP, armvc.cmd_buffer_ptr(), armvc.NUM_CMD_WRITE_BYTES, BaseManager::TIMEOUT_MS);
         if (ret != 0) {
             throw WriteBytesException("Read inappropriate # of bytes from USB");
         }
 
         ret = 0;
         ret = xfer_in_chunks(
-            han_wrap, BaseManager::DATA_IN_EP, armvc.read_data_buffer, armvc.NUM_DATA_BYTES, BaseManager::TIMEOUT_MS);;
+            han_wrap, BaseManager::DATA_IN_EP, armvc.read_data_buffer_ptr(), armvc.NUM_DATA_BYTES, BaseManager::TIMEOUT_MS);;
         if (ret < 0) {
             throw ReadBytesException("Problem reading serial number from detector");
         }

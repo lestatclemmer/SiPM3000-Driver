@@ -85,7 +85,7 @@ namespace SipmUsb
                 LibUsbHandleWrap han_wrap = dev_map[arm_serial];
 
                 int xfer_ret = xfer_in_chunks(
-                    han_wrap, BaseManager::CMD_OUT_EP, con.cmd_buffer,
+                    han_wrap, BaseManager::CMD_OUT_EP, con.cmd_buffer_ptr(),
                     con.NUM_CMD_WRITE_BYTES, BaseManager::TIMEOUT_MS);
 
                 if (xfer_ret < 0) {
@@ -97,7 +97,7 @@ namespace SipmUsb
                 // if there is more data to write to the device (in the write data buffer)
                 if (!con.short_write_possible()) {
                     xfer_ret = xfer_in_chunks(
-                        han_wrap, BaseManager::DATA_OUT_EP, con.write_data_buffer,
+                        han_wrap, BaseManager::DATA_OUT_EP, con.write_data_buffer_ptr(),
                         con.NUM_DATA_BYTES, BaseManager::TIMEOUT_MS);
                     if (xfer_ret < 0) {
                         std::stringstream ss;
@@ -115,7 +115,7 @@ namespace SipmUsb
                 LibUsbHandleWrap han_wrap = dev_map[arm_serial];
                 // send command saying, "hi, i want data"
                 int xfer_ret = xfer_in_chunks(
-                    han_wrap, BaseManager::CMD_OUT_EP, con.cmd_buffer,
+                    han_wrap, BaseManager::CMD_OUT_EP, con.cmd_buffer_ptr(),
                     con.NUM_CMD_WRITE_BYTES, BaseManager::TIMEOUT_MS);
 
                 if (xfer_ret < 0) {
@@ -126,7 +126,7 @@ namespace SipmUsb
 
                 // read the actual data now
                 xfer_ret = xfer_in_chunks(
-                    han_wrap, BaseManager::DATA_IN_EP, con.read_data_buffer,
+                    han_wrap, BaseManager::DATA_IN_EP, con.read_data_buffer_ptr(),
                     con.NUM_DATA_BYTES, BaseManager::TIMEOUT_MS);
 
                 if (xfer_ret < 0) {
@@ -170,7 +170,7 @@ namespace SipmUsb
                     throw SerialNotFoundError(ss.str().c_str());
                 }
 
-                auto wbuf_ptr = con.write_data_buffer;
+                auto wbuf_ptr = con.write_data_buffer_ptr();
                 if (std::equal(wbuf_ptr, wbuf_ptr + con.NUM_DATA_BYTES, wbuf_ptr)) {
                     // do nothing
                     // log_err("Warning: registers to write in are empty. This is ok for some commands.");

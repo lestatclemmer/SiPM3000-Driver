@@ -3,7 +3,7 @@ IOCOND = io-containers
 MAND = managers
 
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -I. -I$(MAND) -I$(IOCOND) -I/usr/include/ -I/usr/local/include/libusb-1.0/
+CXXFLAGS = -std=c++20 -Wall -Wextra -I. -I$(MAND) -I$(IOCOND) -I/usr/include/ -I/usr/local/include/libusb-1.0/ -g
 LDLIBS = -ldl -lusb-1.0
 
 OUT := main
