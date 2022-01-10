@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cerrno>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -12,7 +14,10 @@ namespace SipmUsb
     class UsbFuncException : public std::runtime_error
     {
         public:
-            UsbFuncException(const char* what) : std::runtime_error(what) { }
+            UsbFuncException(const char* what) : std::runtime_error(what)
+            { }
+            UsbFuncException(const std::string& what) : std::runtime_error(what.c_str())
+            { }
     };
 
     class UsbFuncHandle

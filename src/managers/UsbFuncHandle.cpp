@@ -5,6 +5,10 @@ namespace SipmUsb
     UsbFuncHandle::UsbFuncHandle(const std::string& lib_path) :
         libusb_handle(dlopen(lib_path.c_str(), RTLD_LAZY))
     {
+        if (!libusb_handle) {
+            std::string err = "Can't open the libusb simulator .so dynamic library: \n";
+            throw UsbFuncException(err + dlerror());
+        }
         int ret = 0;
 
         // |= so that if any load fails, ret is 1
