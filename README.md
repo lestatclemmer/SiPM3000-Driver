@@ -1,5 +1,8 @@
 # Bridgeport 3000 series USB breakout
 
+## Update 2022
+Migrated to `CMake`. To compile: `cd source-code && mkdir build && cd build && cmake .. && make`
+
 ## Intro
 This repository contains C++ source to interface with the MCA-3000 boards from Bridgeport Instruments, as well as some tools to make the setup of this interface easier.
 
@@ -11,13 +14,13 @@ Not all detector  commands have been implemented. I've only written code for `fp
 Another library that comes packaged *only with Unix systems* is called `libdl`. This allows for the loading of dynamic libraries, `.so` files on Linux. This library is only required to use the simulator because the simulator is stored as a `.so` file.
 
 ## Running the example program
-Out of the box, if you plug in the detector, `cd src && make && sudo ./main`, the `main` program will run and collect a spectrum from the detector using some `fpga_ctrl` and `arm_ctrl` settings that were used at EXACT's flight selection review (FSR). Compiling the program requires GNU Make, installed by default on Linux and macOS. The program will only compile on Unix platforms due to the simulator considerations above.
+~~Out of the box, if you plug in the detector, `cd src && make && sudo ./main`, the `main` program will run and collect a spectrum from the detector using some `fpga_ctrl` and `arm_ctrl` settings that were used at EXACT's flight selection review (FSR).~~ (See above compilation instructions). Compiling the program requires GNU Make (and CMake), installed by default on Linux and macOS. The program will only compile on Unix platforms due to the simulator considerations above.
 
 If you really want to use this interface on Windows, you'll have to figure out how to install `libusb-1.0` on Windows and link to it, and then delete the `SimManager` files. Because of this, I would recommend either using a dedicated Linux computer or even a Linux VM in Windows to use this software.
 
 If you want to use the software on macOS, just realize the simulator won't work. Mike doesn't provide simulator files for macOS.
 
-If you want to run the simulator, uncomment the lines in `src/main.cpp` to switch from `SipmUsb::UsbManager man;` to `SipmUsb::SimManager man;`. The `lib` folder **must** be named `lib`, and it must be placed in the same directory from which you run the program. For example, if `main` is located in `src`, and you run it by doing `./src/main`, the `lib` folder must be in the folder that corresponds to your current directory (i.e. the one above `src`). The simulator is very fragile because Mike did not intend for it to be used by others in this way I believe.
+If you want to run the simulator, uncomment the lines in `source-code/main.cc` to switch from `SipmUsb::UsbManager man;` to `SipmUsb::SimManager man;`. The `lib` folder **must** be named `lib`, and it must be placed in the same directory from which you run the program. For example, if `main` is located in `src`, and you run it by doing `./source-code/main`, the `lib` folder must be in the folder that corresponds to your current directory (i.e. the one above `src`). The simulator is very fragile because Mike did not intend for it to be used by others in this way I believe.
 
 
 ## Program structure
@@ -28,19 +31,19 @@ First: the whole API is within the `namespace SipmUsb`. If the code is ever exte
 ### Interface classes
 There are three interfacing classes: `BaseManager`, `UsbManager`, and `SimManager`. `UsbManager` handles communication with the detector over an actual USB connection. `SimManager` can communicate with the Bridgeport simulator, which is stored in the `lib` folder in a file called `sipm_3k_simusb.so`. `BaseManager` is an abstract base class that defines the public interface of both `SimManager` and `UsbManager`. `SimManager` and `UsbManager` both inherit from `BaseManager`. 
 
-There are two things you can do with the `UsbManager` and `SimManager` classes. The first is to read from the detector, the second is to write settings or data to it. Say we have some `UsbManager` object called `man`. Then to read from the detector, you call `man.read_into(serial_number, io_con);`. To write data to the detector, you call `man.write_from(serial_number, io_con);`. The `serial_number` is a `std::string` that uniquely identifies the detector; see `src/main.cpp` for an example of how to retrieve that serial number. `io_con` is an `IoContainer` object, which holds data either read from or to be written to the MCA-3000. Data is *written from* the `IoContainer` and *read into* it, hence the method naming. (Internally, the `IoContainer` object holds three buffers: one for write data, one for read data, and one for command data, but the user doesn't have to touch those buffers directly.)
+There are two things you can do with the `UsbManager` and `SimManager` classes. The first is to read from the detector, the second is to write settings or data to it. Say we have some `UsbManager` object called `man`. Then to read from the detector, you call `man.read_into(serial_number, io_con);`. To write data to the detector, you call `man.write_from(serial_number, io_con);`. The `serial_number` is a `std::string` that uniquely identifies the detector; see `source-code/main.cc` for an example of how to retrieve that serial number. `io_con` is an `IoContainer` object, which holds data either read from or to be written to the MCA-3000. Data is *written from* the `IoContainer` and *read into* it, hence the method naming. (Internally, the `IoContainer` object holds three buffers: one for write data, one for read data, and one for command data, but the user doesn't have to touch those buffers directly.)
 
 ### Command classes
-I mention above the `IoContainer` class. `IoContainer` is an abstract base class that holds auto-managed buffers to facilitate easy USB transfer and thus detector (or simulator) communication. It allows for encoding/decoding of USB bytes to the appropriate `Registers` data type. Please see `src/main.cpp` and read the section below on updating settings to know better what i mean by `Registers`.
+I mention above the `IoContainer` class. `IoContainer` is an abstract base class that holds auto-managed buffers to facilitate easy USB transfer and thus detector (or simulator) communication. It allows for encoding/decoding of USB bytes to the appropriate `Registers` data type. Please see `source-code/main.cc` and read the section below on updating settings to know better what i mean by `Registers`.
 
 In any event, the structure of the detector commands is as follows: each command is a subclass of `IoContainer`. For example, `ListModeContainer` inherits from `IoContainer`, so it gets all of the stuff `IoContainer` has and then some.
 
 The public interface of `IoContainer` allows for updating what is written to the detector (method `update_write_args`), updating the direction of data flow (method `update_transfer_flags`), and construction of the appropriate data type `Registers` from the read or write bytes buffers (method `registers_from_buffer`).
 
-Specific commands have further functionality. Look at the function `parse_list_buffer` in `src/io-containers/ListModeContainer.cpp` to see the custom behavior specific to list mode. `parse_list_buffer` takes the `Registers` generated by `registers_from_buffer` and parses them to a `std::vector` of list mode data points, very akin to whwat Mike does.
+Specific commands have further functionality. Look at the function `parse_list_buffer` in `source-code/io-containers/ListModeContainer.cc` to see the custom behavior specific to list mode. `parse_list_buffer` takes the `Registers` generated by `registers_from_buffer` and parses them to a `std::vector` of list mode data points, very akin to whwat Mike does.
 
 
-I refer you to `src/main.cpp` for an example of how this all fits together.
+I refer you to `source-code/main.cc` for an example of how this all fits together.
 
 
 ## Updating settings
@@ -56,4 +59,4 @@ Now, the process to get the registers you want is pretty simple:
 3. Run `extract_registers.py` to pull the registers out for each data structure.
 4. Put the resulting registers into your code using the appropriate subclass of `IoContainer`'s registers.
 
-Again, see `src/main.cpp` for an example of this in action.
+Again, see `source-code/main.cc` for an example of this in action.

@@ -1,4 +1,6 @@
 main
+driver_main
+build
 ._*
 *.swp
 *.txt
@@ -9,4 +11,3 @@ main
 *.tab
 *.dblite
 extract_registers/_*
-src/deps
