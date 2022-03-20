@@ -3,7 +3,6 @@ driver_main
 build
 ._*
 *.swp
-*.txt
 *.o
 .depend
 *.pyo

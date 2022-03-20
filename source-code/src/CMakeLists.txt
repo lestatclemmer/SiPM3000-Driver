@@ -1,0 +1,15 @@
+target_sources(${EXC_OUT}
+    PRIVATE
+        ArmCtrlContainer.cc
+        ArmVersionContainer.cc
+        BaseManager.cc
+        FpgaActionContainer.cc
+        FpgaCtrlContainer.cc
+        IoContainer.cc
+        LegacyHistogramContainer.cc
+        ListModeContainer.cc
+        SimManager.cc
+        TimeSliceContainer.cc
+        UsbFuncHandle.cc
+        UsbManager.cc
+        )
