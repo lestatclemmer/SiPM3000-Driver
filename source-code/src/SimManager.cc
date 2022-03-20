@@ -49,7 +49,8 @@ namespace SipmUsb
     void SimManager::ping_devices()
     {
         // magic numbers from Bridgeport
-        char ping_buf[64] = {0, [1]=8, [2]=60};
+        static char ping_buf[64] = {0};
+        ping_buf[1] = 8; ping_buf[2] = 60;
         for (auto& hw : devices) {
             for (int i = 0; i < 1000; ++i) {
                 (void) xfer_in_chunks(hw, BaseManager::CMD_OUT_EP, ping_buf, 64, BaseManager::TIMEOUT_MS);

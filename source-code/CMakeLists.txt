@@ -1,7 +1,7 @@
 # update this to change where libusb is instaalled
 set(LIBUSB_DIR "/usr/local/include/libusb-1.0/")
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.16)
 set(CMAKE_CXX_STANDARD 20)
 project(sipm3k_driver)
 

@@ -35,8 +35,8 @@ SipmUsb::LegacyHistogramContainer::HistoAry acquire_histogram()
     // to use the simulator instead, change the line to the SimManager one
     // everything should work the same (except updating settings is weird with the simulator)
     // SimManager and UsbManager are subclasses of BaseManager.
-    /* SipmUsb::SimManager man("./lib/sipm_3k_simusb.so"); */
-    SipmUsb::UsbManager man;
+    SipmUsb::SimManager man("./lib/sipm_3k_simusb.so");
+    // SipmUsb::UsbManager man;
 
     // get the first serial number of a connected device (assume there is one connected)
     // if there isn't one connected, an exception will be thrown at some point
