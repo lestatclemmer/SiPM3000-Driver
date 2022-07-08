@@ -11,5 +11,8 @@ namespace SipmUsb
             { return {FPGA_READ_TYPE, FPGA_WRITE_TYPE, TIME_SLICE_CMD_ID}; }
         public:
             // TODO: do this part
+	    TimeSliceContainer();
+	    ~TimeSliceContainer();
+
     };
 }
